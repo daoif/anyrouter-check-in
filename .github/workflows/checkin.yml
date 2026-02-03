@@ -1,4 +1,5 @@
 name: AnyRouter 自动签到
+# Updated to reactivate schedule
 on:
   schedule:
     - cron: '0 */6 * * *'
