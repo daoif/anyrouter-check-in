@@ -269,6 +269,12 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 
 		if provider_config.needs_manual_check_in():
 			success = execute_check_in(client, account_name, provider_config, headers)
+			if success:
+				# 签到成功后重新查询余额，获取签到后的数据
+				post_info = get_user_info(client, headers, user_info_url)
+				if post_info and post_info.get('success'):
+					print(f'[INFO] {account_name}: 签到后 {post_info["display"]}')
+					user_info = post_info
 			return success, user_info
 		else:
 			print(f'[INFO] {account_name}: Check-in completed automatically (triggered by user info request)')
@@ -368,7 +374,16 @@ async def main():
 
 	if need_notify:
 		# 构建通知内容
-		time_info = f'[时间] 执行时间: {datetime.now(tz=CN_TZ).strftime("%Y-%m-%d %H:%M:%S")} (UTC+8)'
+		time_info = f'执行时间: {datetime.now(tz=CN_TZ).strftime("%Y-%m-%d %H:%M:%S")} (UTC+8)'
+
+		# 统计
+		if success_count == total_count:
+			status_text = '所有账号签到成功!'
+		elif success_count > 0:
+			status_text = '部分账号签到成功'
+		else:
+			status_text = '所有账号签到失败'
+		summary_line = f'签到结果: 成功 {success_count}/{total_count} | {status_text}'
 
 		# 额度信息
 		balance_lines = []
@@ -382,58 +397,41 @@ async def main():
 				bal = current_balances[account_key]
 				total_quota += bal['quota']
 				total_used += bal['used']
-				line = f'[额度] {account_name} ({provider_name})'
-				line += f'\n余额: ${bal["quota"]}, 已用: ${bal["used"]}, 总额: ${bal["total"]}'
+				line = f'  {account_name} ({provider_name})'
+				line += f'\n    余额: ${bal["quota"]}, 已用: ${bal["used"]}, 总额: ${bal["total"]}'
 				if last_balance_data and account_key in last_balance_data:
 					prev = last_balance_data[account_key]
 					prev_total = round(prev.get('total', prev.get('quota', 0) + prev.get('used', 0)), 2)
 					diff = round(bal['total'] - prev_total, 2)
 					if diff > 0:
-						line += f'\n较上次: 总额增加 ${diff} (上次总额: ${prev_total})'
+						line += f'\n    较上次: 总额增加 ${diff} (上次: ${prev_total})'
 					elif diff < 0:
-						line += f'\n较上次: 总额减少 ${abs(diff)} (上次总额: ${prev_total})'
+						line += f'\n    较上次: 总额减少 ${abs(diff)} (上次: ${prev_total})'
 					else:
-						line += f'\n较上次: 总额无变化 (${bal["total"]})'
+						line += f'\n    较上次: 无变化'
 				else:
-					line += '\n较上次: 首次记录'
+					line += '\n    较上次: 首次记录'
 				balance_lines.append(line)
 
-		# 总额度汇总（多个账号时显示）
-		if len(balance_lines) > 1:
-			total_all = round(total_quota + total_used, 2)
-			balance_lines.append(
-				f'[汇总] 全部站点\n余额: ${round(total_quota, 2)}, 已用: ${round(total_used, 2)}, 总额: ${total_all}'
-			)
+		# 汇总行
+		total_all = round(total_quota + total_used, 2)
+		totals_line = f'余额合计: ${round(total_quota, 2)} | 已用合计: ${round(total_used, 2)} | 总额合计: ${total_all}'
 
 		# 失败账号信息
 		fail_lines = []
 		for name, error in failed_accounts:
-			fail_line = f'[失败] {name}'
-			if error:
-				fail_line += f'\n{error}'
+			fail_line = f'  {name}: {error}' if error else f'  {name}'
 			fail_lines.append(fail_line)
 
-		# 统计
-		summary = [
-			'[统计] 签到结果:',
-			f'[成功] 成功: {success_count}/{total_count}',
-			f'[失败] 失败: {total_count - success_count}/{total_count}',
-		]
-
-		if success_count == total_count:
-			summary.append('[成功] 所有账号签到成功!')
-		elif success_count > 0:
-			summary.append('[警告] 部分账号签到成功')
-		else:
-			summary.append('[错误] 所有账号签到失败')
-
-		# 组合通知内容
-		sections = [time_info]
-		if balance_lines:
-			sections.append('\n'.join(balance_lines))
+		# 组合通知内容: 汇总在上，明细在下
+		sections = [time_info, summary_line]
+		if total_quota > 0 or total_used > 0:
+			sections.append(totals_line)
 		if fail_lines:
-			sections.append('\n'.join(fail_lines))
-		sections.append('\n'.join(summary))
+			sections.append('失败详情:\n' + '\n'.join(fail_lines))
+		sections.append('─' * 30)
+		if balance_lines:
+			sections.append('各账号明细:\n' + '\n\n'.join(balance_lines))
 
 		notify_content = '\n\n'.join(sections)
 		print(notify_content)
