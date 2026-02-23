@@ -346,12 +346,17 @@ async def main():
 
 		# 额度信息
 		balance_lines = []
+		total_quota = 0.0
+		total_used = 0.0
 		for i, account in enumerate(accounts):
 			account_key = f'account_{i + 1}'
 			if account_key in current_balances:
 				account_name = account.get_display_name(i)
+				provider_name = account.provider
 				bal = current_balances[account_key]
-				line = f'[额度] {account_name}'
+				total_quota += bal['quota']
+				total_used += bal['used']
+				line = f'[额度] {account_name} ({provider_name})'
 				line += f'\n余额: ${bal["quota"]}, 已用: ${bal["used"]}, 总额: ${bal["total"]}'
 				if last_balance_data and account_key in last_balance_data:
 					prev = last_balance_data[account_key]
@@ -366,6 +371,13 @@ async def main():
 				else:
 					line += '\n较上次: 首次记录'
 				balance_lines.append(line)
+
+		# 总额度汇总（多个账号时显示）
+		if len(balance_lines) > 1:
+			total_all = round(total_quota + total_used, 2)
+			balance_lines.append(
+				f'[汇总] 全部站点\n余额: ${round(total_quota, 2)}, 已用: ${round(total_used, 2)}, 总额: ${total_all}'
+			)
 
 		# 失败账号信息
 		fail_lines = []
