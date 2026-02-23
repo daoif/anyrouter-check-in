@@ -9,6 +9,9 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 
+import ssl
+import time
+
 import httpx
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -121,10 +124,27 @@ async def get_waf_cookies_with_playwright(account_name: str, login_url: str, req
 				return None
 
 
+MAX_RETRIES = 3
+RETRY_DELAY = 2
+
+
+def _request_with_retry(func, *args, **kwargs):
+	"""带重试的 HTTP 请求，处理临时 SSL 波动"""
+	for attempt in range(MAX_RETRIES):
+		try:
+			return func(*args, **kwargs)
+		except (ssl.SSLError, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+			if attempt < MAX_RETRIES - 1:
+				print(f'[RETRY] Request failed ({e.__class__.__name__}), retrying ({attempt + 2}/{MAX_RETRIES})...')
+				time.sleep(RETRY_DELAY)
+			else:
+				raise
+
+
 def get_user_info(client, headers, user_info_url: str):
 	"""获取用户信息"""
 	try:
-		response = client.get(user_info_url, headers=headers, timeout=30)
+		response = _request_with_retry(client.get, user_info_url, headers=headers, timeout=30)
 
 		if response.status_code == 200:
 			data = response.json()
@@ -167,7 +187,7 @@ def execute_check_in(client, account_name: str, provider_config, headers: dict):
 	checkin_headers.update({'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'})
 
 	sign_in_url = f'{provider_config.domain}{provider_config.sign_in_path}'
-	response = client.post(sign_in_url, headers=checkin_headers, timeout=30)
+	response = _request_with_retry(client.post, sign_in_url, headers=checkin_headers, timeout=30)
 
 	print(f'[RESPONSE] {account_name}: Response status code {response.status_code}')
 
@@ -177,12 +197,15 @@ def execute_check_in(client, account_name: str, provider_config, headers: dict):
 			if result.get('ret') == 1 or result.get('code') == 0 or result.get('success'):
 				print(f'[SUCCESS] {account_name}: Check-in successful!')
 				return True
-			else:
-				error_msg = result.get('msg', result.get('message', 'Unknown error'))
-				print(f'[FAILED] {account_name}: Check-in failed - {error_msg}')
-				return False
+
+			msg = result.get('msg', result.get('message', ''))
+			if '已签到' in msg or '已经签到' in msg:
+				print(f'[SUCCESS] {account_name}: Already checked in today')
+				return True
+
+			print(f'[FAILED] {account_name}: Check-in failed - {msg or "Unknown error"}')
+			return False
 		except json.JSONDecodeError:
-			# 如果不是 JSON 响应，检查是否包含成功标识
 			if 'success' in response.text.lower():
 				print(f'[SUCCESS] {account_name}: Check-in successful!')
 				return True
@@ -224,7 +247,7 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
 			'Accept': 'application/json, text/plain, */*',
 			'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-			'Accept-Encoding': 'gzip, deflate, br, zstd',
+			'Accept-Encoding': 'gzip, deflate',
 			'Referer': provider_config.domain,
 			'Origin': provider_config.domain,
 			'Connection': 'keep-alive',
@@ -236,10 +259,13 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 
 		user_info_url = f'{provider_config.domain}{provider_config.user_info_path}'
 		user_info = get_user_info(client, headers, user_info_url)
-		if user_info and user_info.get('success'):
-			print(user_info['display'])
-		elif user_info:
-			print(user_info.get('error', 'Unknown error'))
+
+		if not user_info or not user_info.get('success'):
+			error = user_info.get('error', 'Unknown error') if user_info else 'No response'
+			print(f'[FAILED] {account_name}: 无法获取用户信息 - {error}')
+			return False, user_info
+
+		print(user_info['display'])
 
 		if provider_config.needs_manual_check_in():
 			success = execute_check_in(client, account_name, provider_config, headers)

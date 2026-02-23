@@ -417,8 +417,8 @@ function getConfig() {
     document.querySelectorAll('.account-item[data-type="provider"]').forEach(el => {
         const id = qs(el, '.p-id').value.trim();
         if (!id) return;
-        const p = { domain: qs(el, '.p-domain').value.trim() };
-        const v = (sel) => qs(el, sel).value.trim();
+        const p = { domain: qs(el, '.p-domain').value.trim().replace(/\/+$/, '') };
+        const v = (sel) => qs(el, sel).value.trim().replace(/\/+$/, '');
         if (v('.p-signin')) p.sign_in_path = v('.p-signin');
         if (v('.p-userinfo')) p.user_info_path = v('.p-userinfo');
         if (v('.p-userkey')) p.api_user_key = v('.p-userkey');
@@ -703,10 +703,10 @@ function generateSecrets() {
     const providers = {};
     document.querySelectorAll('.account-item[data-type="provider"]').forEach(el => {
         const id = qs(el, '.p-id').value.trim();
-        const domain = qs(el, '.p-domain').value.trim();
+        const domain = qs(el, '.p-domain').value.trim().replace(/\/+$/, '');
         if (!id || !domain) return;
         const p = { domain };
-        const v = (s) => qs(el, s).value.trim();
+        const v = (s) => qs(el, s).value.trim().replace(/\/+$/, '');
         if (v('.p-signin')) p.sign_in_path = v('.p-signin');
         if (v('.p-userinfo')) p.user_info_path = v('.p-userinfo');
         if (v('.p-userkey')) p.api_user_key = v('.p-userkey');
